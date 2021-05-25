@@ -3,21 +3,57 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	dapr "github.com/dapr/go-sdk/client"
+	"go.uber.org/zap/zapcore"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
+
+var log = ctrl.Log.WithName("dapr-client")
+
+// setupLogger configures logger
+func setupLogger(out io.Writer) {
+	ctrl.SetLogger(
+		zap.New(
+			zap.Encoder(
+				zapcore.NewJSONEncoder(
+					zapcore.EncoderConfig{
+						MessageKey:     "msg",
+						LevelKey:       "level",
+						TimeKey:        "time",
+						NameKey:        "name",
+						CallerKey:      "caller",
+						StacktraceKey:  "stacktrace",
+						LineEnding:     zapcore.DefaultLineEnding,
+						EncodeLevel:    zapcore.LowercaseLevelEncoder,
+						EncodeTime:     zapcore.ISO8601TimeEncoder,
+						EncodeDuration: zapcore.SecondsDurationEncoder,
+						EncodeCaller:   zapcore.ShortCallerEncoder,
+						EncodeName:     zapcore.FullNameEncoder,
+					},
+				),
+			),
+			zap.UseDevMode(true),
+			zap.WriteTo(out),
+		),
+	)
+}
 
 func main() {
 	// just for this demo
 	ctx := context.Background()
+	setupLogger(os.Stderr)
 	json := `{ "message": "hello" }`
 	data := []byte(json)
 	store := "statestore"
 	pubsub := "messages"
 
 	// create the client
-	client, err := dapr.NewClient()
+	client, err := dapr.NewClient(log)
 	if err != nil {
 		panic(err)
 	}

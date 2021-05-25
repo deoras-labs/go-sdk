@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/golang/protobuf/ptypes/empty"
@@ -25,7 +26,12 @@ const (
 
 var (
 	testClient Client
+	once       sync.Once
 )
+
+func init() {
+	once.Do(func() { setupLogger(os.Stderr) })
+}
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -38,24 +44,24 @@ func TestMain(m *testing.M) {
 
 func TestNewClient(t *testing.T) {
 	t.Run("no arg for with port", func(t *testing.T) {
-		_, err := NewClientWithPort("")
+		_, err := NewClientWithPort("", log)
 		assert.Error(t, err)
 	})
 
 	t.Run("no arg for with address", func(t *testing.T) {
-		_, err := NewClientWithAddress("")
+		_, err := NewClientWithAddress("", log)
 		assert.Error(t, err)
 	})
 
 	t.Run("new client closed with empty token", func(t *testing.T) {
-		c, err := NewClient()
+		c, err := NewClient(log)
 		assert.NoError(t, err)
 		defer c.Close()
 		c.WithAuthToken("")
 	})
 
 	t.Run("new client with trace ID", func(t *testing.T) {
-		c, err := NewClient()
+		c, err := NewClient(log)
 		assert.NoError(t, err)
 		defer c.Close()
 		ctx := c.WithTraceID(context.Background(), "")
@@ -72,7 +78,6 @@ func TestShutdown(t *testing.T) {
 	})
 }
 
-
 func getTestClient(ctx context.Context) (client Client, closer func()) {
 	s := grpc.NewServer()
 	pb.RegisterDaprServer(s, &testDaprServer{
@@ -82,7 +87,7 @@ func getTestClient(ctx context.Context) (client Client, closer func()) {
 	l := bufconn.Listen(testBufSize)
 	go func() {
 		if err := s.Serve(l); err != nil && err.Error() != "closed" {
-			logger.Fatalf("test server exited with error: %v", err)
+			log.Error(err, "test server exited with error")
 		}
 	}()
 
@@ -92,7 +97,7 @@ func getTestClient(ctx context.Context) (client Client, closer func()) {
 
 	c, err := grpc.DialContext(ctx, "", d, grpc.WithInsecure())
 	if err != nil {
-		logger.Fatalf("failed to dial test context: %v", err)
+		log.Error(err, "failed to dial test context")
 	}
 
 	closer = func() {
@@ -100,7 +105,7 @@ func getTestClient(ctx context.Context) (client Client, closer func()) {
 		s.Stop()
 	}
 
-	client = NewClientWithConnection(c)
+	client = NewClientWithConnection(c, log)
 	return
 }
 

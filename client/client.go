@@ -2,17 +2,17 @@ package client
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"net"
 	"os"
 	"sync"
 
+	pb "github.com/dapr/go-sdk/dapr/proto/runtime/v1"
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/emptypb"
-
-	pb "github.com/dapr/go-sdk/dapr/proto/runtime/v1"
 )
 
 const (
@@ -24,7 +24,6 @@ const (
 )
 
 var (
-	logger               = log.New(os.Stdout, "", 0)
 	_             Client = (*GRPCClient)(nil)
 	defaultClient Client
 	doOnce        sync.Once
@@ -108,17 +107,17 @@ type Client interface {
 // Note, this default factory function creates Dapr client only once. All subsequent invocations
 // will return the already created instance. To create multiple instances of the Dapr client,
 // use one of the parameterized factory functions:
-//   NewClientWithPort(port string) (client Client, err error)
-//   NewClientWithAddress(address string) (client Client, err error)
-//   NewClientWithConnection(conn *grpc.ClientConn) Client
-func NewClient() (client Client, err error) {
+//   NewClientWithPort(port string, log logr.Logger) (client Client, err error)
+//   NewClientWithAddress(address string, log logr.Logger) (client Client, err error)
+//   NewClientWithConnection(conn *grpc.ClientConn, log logr.Logger) Client
+func NewClient(log logr.Logger) (client Client, err error) {
 	port := os.Getenv(daprPortEnvVarName)
 	if port == "" {
 		port = daprPortDefault
 	}
 	var onceErr error
 	doOnce.Do(func() {
-		c, err := NewClientWithPort(port)
+		c, err := NewClientWithPort(port, log)
 		onceErr = errors.Wrap(err, "error creating default client")
 		defaultClient = c
 	})
@@ -127,32 +126,35 @@ func NewClient() (client Client, err error) {
 }
 
 // NewClientWithPort instantiates Dapr using specific port.
-func NewClientWithPort(port string) (client Client, err error) {
+func NewClientWithPort(port string, log logr.Logger) (client Client, err error) {
 	if port == "" {
 		return nil, errors.New("nil port")
 	}
-	return NewClientWithAddress(net.JoinHostPort("127.0.0.1", port))
+	return NewClientWithAddress(net.JoinHostPort("127.0.0.1", port), log)
 }
 
 // NewClientWithAddress instantiates Dapr using specific address (including port).
-func NewClientWithAddress(address string) (client Client, err error) {
+func NewClientWithAddress(address string, log logr.Logger) (client Client, err error) {
 	if address == "" {
 		return nil, errors.New("nil address")
 	}
-	logger.Printf("dapr client initializing for: %s", address)
+	if log != nil {
+		log.Info(fmt.Sprintf("dapr client initializing for: %s", address))
+	}
 	conn, err := grpc.Dial(address, grpc.WithInsecure())
 	if err != nil {
 		return nil, errors.Wrapf(err, "error creating connection to '%s': %v", address, err)
 	}
-	if hasToken := os.Getenv(apiTokenEnvVarName); hasToken != "" {
-		logger.Println("client uses API token")
+	if hasToken := os.Getenv(apiTokenEnvVarName); hasToken != "" && log != nil {
+		log.Info("client uses API token")
 	}
-	return NewClientWithConnection(conn), nil
+	return NewClientWithConnection(conn, log), nil
 }
 
 // NewClientWithConnection instantiates Dapr client using specific connection.
-func NewClientWithConnection(conn *grpc.ClientConn) Client {
+func NewClientWithConnection(conn *grpc.ClientConn, log logr.Logger) Client {
 	return &GRPCClient{
+		log:         log,
 		connection:  conn,
 		protoClient: pb.NewDaprClient(conn),
 		authToken:   os.Getenv(apiTokenEnvVarName),
@@ -161,6 +163,7 @@ func NewClientWithConnection(conn *grpc.ClientConn) Client {
 
 // GRPCClient is the gRPC implementation of Dapr client.
 type GRPCClient struct {
+	log         logr.Logger
 	connection  *grpc.ClientConn
 	protoClient pb.DaprClient
 	authToken   string
@@ -187,7 +190,9 @@ func (c *GRPCClient) WithTraceID(ctx context.Context, id string) context.Context
 	if id == "" {
 		return ctx
 	}
-	logger.Printf("using trace parent ID: %s", id)
+	if c.log != nil {
+		c.log.Info(fmt.Sprintf("using trace parent ID: %s", id))
+	}
 	md := metadata.Pairs(traceparentKey, id)
 	return metadata.NewOutgoingContext(ctx, md)
 }
